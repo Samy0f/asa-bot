@@ -121,15 +121,9 @@ On a **reply** message, right-click → **Analize**:
 2. Set **Build Type** to **Dockerfile** (uses the root `Dockerfile`)
 3. Add all variables from `.env.example` in the **Environment** tab
 4. Ensure PostgreSQL is reachable from the container (`DATABASE_URL`)
-5. Deploy — migrations run automatically on container start
+5. Deploy — on container start the entrypoint runs migrations and registers Discord commands (requires `DISCORD_TOKEN` and `CLIENT_ID` in env)
 
-After the first deploy, register Discord commands once from your machine (or a one-off Dokploy job):
-
-```bash
-bun run dc
-```
-
-Or run it locally with the same production env vars.
+> Do **not** run `bun run dc` in the Dockerfile build step — env vars are only available at runtime in Dokploy.
 
 > This bot connects outbound to Discord only — no HTTP port needs to be exposed in Dokploy.
 

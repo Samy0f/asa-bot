@@ -6,6 +6,6 @@ COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
 
 COPY . .
-RUN bun run dc
+RUN chmod +x docker-entrypoint.sh
 
-CMD ["bun", "run", "start"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
