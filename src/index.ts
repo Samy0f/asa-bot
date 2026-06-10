@@ -262,7 +262,6 @@ client.on("interactionCreate", async (interaction) => {
         await buildListMessage(items, 0, coundData[0]?.count ?? 0, term)
       );
     }
-
   }
 
   if (interaction.isAutocomplete()) {
@@ -492,7 +491,6 @@ client.on("interactionCreate", async (interaction) => {
 
       return interaction.followUp({
         content: bookmark.imageUrl,
-        flags: [MessageFlags.Ephemeral],
       });
     }
 
