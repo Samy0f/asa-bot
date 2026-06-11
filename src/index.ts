@@ -3,27 +3,26 @@ import {
   Client,
   DiscordAPIError,
   GatewayIntentBits,
+  MessageFlags,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  MessageFlags,
   type ModalActionRowComponentBuilder,
 } from "discord.js";
 import dotenv from "dotenv";
-import { uploadToR2 } from "./lib/r2";
-import { bookmarks, temporaryCache } from "./db/schema";
+import { and, eq, ilike, sql } from "drizzle-orm";
+import { generateResponse } from "./ai";
+import { NO_RESPONSE_MESSAGE, PAGE_SIZE } from "./constants";
 import db from "./db";
-import { and, ilike, eq, sql, count } from "drizzle-orm";
+import { bookmarks, temporaryCache } from "./db/schema";
+import { buildListMessage } from "./lib/listUI";
+import { uploadToR2 } from "./lib/r2";
 import {
   extractImageFromMessage,
-  fetchReferencedMessage,
   getImageDataFromUrl,
   parseReplyBookmarkCommand,
-  parseSimpleReplyBookmark,
 } from "./lib/utils";
-import { NO_RESPONSE_MESSAGE, PAGE_SIZE } from "./constants";
 import { RESPONSES } from "./responses";
-import { buildListMessage } from "./lib/listUI";
 
 dotenv.config();
 
@@ -75,7 +74,7 @@ client.on("interactionCreate", async (interaction) => {
       const [cacheEntry] = await db
         .insert(temporaryCache)
         .values({
-          imageUrl: imageData.imageUrl,
+          data: imageData.imageUrl,
           contentType: imageData.contentType,
         })
         .returning({ id: temporaryCache.id });
@@ -121,64 +120,85 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.commandName === "Analize") {
-      await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+      await interaction.deferReply();
 
       const targetMessage = interaction.targetMessage;
-      const parsed = parseSimpleReplyBookmark(targetMessage.content);
-
-      if (!parsed) {
-        return interaction.editReply(NO_RESPONSE_MESSAGE);
-      }
-
-      if (!targetMessage.reference?.messageId) {
-        return interaction.editReply({
-          content: RESPONSES.noReplyReference(),
-        });
-      }
 
       try {
-        const referencedMessage = await fetchReferencedMessage(
-          client,
-          targetMessage,
-          interaction.channel
-        );
-
-        if (!referencedMessage) {
-          return interaction.editReply({
-            content: RESPONSES.messageNotFound(),
-          });
-        }
-
-        const imageData = extractImageFromMessage(referencedMessage);
-
-        if (!imageData) {
-          return interaction.editReply({
-            content: RESPONSES.noImageInMessage(),
-          });
-        }
-
-        await saveBookmark(
-          interaction.user.id,
+        const response = await generateResponse(
+          interaction.user,
           interaction.guildId || "DM",
-          parsed.name,
-          imageData
+          targetMessage.content
         );
 
-        return interaction.editReply({
-          content: RESPONSES.sucess(),
-        });
-      } catch (error) {
-        if (error instanceof DiscordAPIError && error.code === 50001) {
-          return interaction.editReply({
-            content: RESPONSES.missingAccess(),
-          });
+        if (response && response.text) {
+          return interaction.editReply(response.text);
         }
 
-        console.error("Analize command error:", error);
+        return interaction.editReply(NO_RESPONSE_MESSAGE);
+      } catch (error) {
+        console.error("Asa command error:", error);
         return interaction.editReply({
           content: RESPONSES.normalError(),
         });
       }
+    }
+
+    if (interaction.commandName === "Asa") {
+      const targetMessage = interaction.targetMessage;
+      const MessageData = JSON.stringify({
+        content: targetMessage.content,
+        attachments: targetMessage.attachments.map((att) => ({
+          url: att.url,
+          contentType: att.contentType,
+          sendBy: interaction.user.displayName,
+        })),
+      });
+
+      const [cacheEntry] = await db
+        .insert(temporaryCache)
+        .values({
+          data: MessageData,
+          contentType: "application/json",
+        })
+        .returning({ id: temporaryCache.id });
+
+      if (!cacheEntry) {
+        console.error("Failed to cache message");
+        return interaction.reply({
+          content: RESPONSES.normalError(),
+          flags: [MessageFlags.Ephemeral],
+        });
+      }
+
+      const modalId = `asa_modal|${cacheEntry.id}`;
+
+      if (modalId.length > 100) {
+        console.error("Message path is too long");
+        return interaction.reply({
+          content: RESPONSES.normalError(),
+          flags: [MessageFlags.Ephemeral],
+        });
+      }
+
+      const modal = new ModalBuilder().setCustomId(modalId).setTitle("Ask Asa");
+
+      const nameInput = new TextInputBuilder()
+        .setCustomId("asa_question_input")
+        .setLabel("What would you like to ask Asa?")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Hm......")
+        .setRequired(true)
+        .setMaxLength(2000);
+
+      const firstActionRow =
+        new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
+          nameInput
+        );
+      modal.addComponents(firstActionRow);
+
+      await interaction.showModal(modal);
+      return;
     }
   }
 
@@ -216,7 +236,7 @@ client.on("interactionCreate", async (interaction) => {
           interaction.guildId || "DM",
           bookmarkName,
           {
-            imageUrl: cacheEntry.imageUrl,
+            imageUrl: cacheEntry.data,
             contentType: cacheEntry.contentType,
           }
         );
@@ -231,6 +251,61 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.editReply({
           content: RESPONSES.normalError(),
         });
+      }
+    }
+
+    if (interaction.customId.startsWith("asa_modal|")) {
+      await interaction.deferReply();
+
+      const [_, cacheId] = interaction.customId.split("|");
+      const question =
+        interaction.fields.getTextInputValue("asa_question_input");
+
+      if (!cacheId) {
+        console.error("Failed to find cached message ID");
+        return interaction.editReply({
+          content: RESPONSES.normalError(),
+        });
+      }
+
+      try {
+        const [cacheEntry] = await db
+          .select()
+          .from(temporaryCache)
+          .where(eq(temporaryCache.id, cacheId));
+
+        if (!cacheEntry) {
+          console.error("Failed to find cached message");
+          return interaction.editReply({
+            content: RESPONSES.normalError(),
+          });
+        }
+
+        const messageData = JSON.parse(cacheEntry.data) as {
+          content: string;
+          attachments: { url: string; contentType: string; sendBy: string }[];
+          sendBy: string;
+        };
+
+        const response = await generateResponse(
+          interaction.user,
+          interaction.guildId || "DM",
+          question,
+          `User asked a question about a message sent by ${messageData.sendBy}, the message content is: ${messageData.content}`
+        );
+
+        if (response && response.text) {
+          return interaction.editReply(response.text);
+        }
+
+        return interaction.editReply(NO_RESPONSE_MESSAGE);
+      } catch (error) {
+        console.error("Asa command error:", error);
+        return interaction.editReply({
+          content: RESPONSES.normalError(),
+        });
+      } finally {
+        await db.delete(temporaryCache).where(eq(temporaryCache.id, cacheId));
       }
     }
 
@@ -325,45 +400,61 @@ client.on("interactionCreate", async (interaction) => {
         }
 
         const parsed = parseReplyBookmarkCommand(question);
-        if (!parsed) {
-          return interaction.editReply(NO_RESPONSE_MESSAGE);
-        }
-
-        if (!parsed.messageId || !parsed.channelId) {
-          return interaction.editReply({
-            content: RESPONSES.noMessageId(),
-          });
-        }
-
-        const channel = await client.channels.fetch(parsed.channelId);
-        if (!channel?.isTextBased()) {
-          return interaction.editReply({
-            content: RESPONSES.messageNotFound(),
-          });
-        }
-
-        const targetMessage = await channel.messages.fetch(parsed.messageId);
-        const imageData = extractImageFromMessage(targetMessage);
-
-        if (!imageData) {
-          return interaction.editReply({
-            content: RESPONSES.noImageInMessage(),
-          });
-        }
-
-        await saveBookmark(
-          interaction.user.id,
-          interaction.guildId || "DM",
-          parsed.name,
-          {
-            imageUrl: imageData.imageUrl,
-            contentType: imageData.contentType,
+        if (parsed) {
+          if (!parsed.messageId || !parsed.channelId) {
+            return interaction.editReply({
+              content: RESPONSES.noMessageId(),
+            });
           }
+
+          const channel = await client.channels.fetch(parsed.channelId);
+          if (!channel?.isTextBased()) {
+            return interaction.editReply({
+              content: RESPONSES.messageNotFound(),
+            });
+          }
+
+          const targetMessage = await channel.messages.fetch(parsed.messageId);
+          const imageData = extractImageFromMessage(targetMessage);
+
+          if (!imageData) {
+            return interaction.editReply({
+              content: RESPONSES.noImageInMessage(),
+            });
+          }
+
+          await saveBookmark(
+            interaction.user.id,
+            interaction.guildId || "DM",
+            parsed.name,
+            {
+              imageUrl: imageData.imageUrl,
+              contentType: imageData.contentType,
+            }
+          );
+
+          return interaction.editReply({
+            content: RESPONSES.sucess(),
+          });
+        }
+
+        const response = await generateResponse(
+          interaction.user,
+          interaction.guildId || "DM",
+          question
         );
 
-        return interaction.editReply({
-          content: RESPONSES.sucess(),
-        });
+        if ("asaError" in response && response.asaError) {
+          return interaction.editReply({
+            content: response.text || RESPONSES.normalError(),
+          });
+        }
+
+        if (response && response.text) {
+          return interaction.editReply(response.text);
+        }
+
+        return interaction.editReply(NO_RESPONSE_MESSAGE);
       } catch (error) {
         console.error("Asa command error:", error);
 

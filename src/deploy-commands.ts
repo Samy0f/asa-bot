@@ -27,7 +27,19 @@ const commands = [
     ]),
 
   new ContextMenuCommandBuilder()
-    .setName("Bookmark Image")
+    .setName("Analize")
+    .setType(ApplicationCommandType.Message)
+    .setIntegrationTypes([
+      ApplicationIntegrationType.UserInstall,
+      ApplicationIntegrationType.GuildInstall,
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel,
+    ]),
+  new ContextMenuCommandBuilder()
+    .setName("Asa")
     .setType(ApplicationCommandType.Message)
     .setIntegrationTypes([
       ApplicationIntegrationType.UserInstall,
@@ -40,7 +52,7 @@ const commands = [
     ]),
 
   new ContextMenuCommandBuilder()
-    .setName("Analize")
+    .setName("Bookmark Image")
     .setType(ApplicationCommandType.Message)
     .setIntegrationTypes([
       ApplicationIntegrationType.UserInstall,

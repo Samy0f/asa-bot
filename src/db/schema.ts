@@ -16,7 +16,7 @@ export const bookmarks = pgTable(
 
 export const temporaryCache = pgTable("temporary_cache", {
   id: uuid("id").defaultRandom().primaryKey(),
-  imageUrl: text("image_url").notNull(),
+  data: text("data").notNull(),
   contentType: text("content_type").notNull(),
 });
 
