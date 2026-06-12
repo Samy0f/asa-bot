@@ -20,7 +20,9 @@ import { uploadToR2 } from "./lib/r2";
 import {
   extractImageFromMessage,
   getImageDataFromUrl,
+  getMessageData,
   parseReplyBookmarkCommand,
+  replyWithAiText,
 } from "./lib/utils";
 import { RESPONSES } from "./responses";
 
@@ -128,11 +130,11 @@ client.on("interactionCreate", async (interaction) => {
         const response = await generateResponse(
           interaction.user,
           interaction.guildId || "DM",
-          targetMessage.content
+          getMessageData(targetMessage)
         );
 
         if (response && response.text) {
-          return interaction.editReply(response.text);
+          return replyWithAiText(interaction, response.text);
         }
 
         return interaction.editReply(NO_RESPONSE_MESSAGE);
@@ -146,19 +148,19 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.commandName === "Asa") {
       const targetMessage = interaction.targetMessage;
-      const MessageData = JSON.stringify({
-        content: targetMessage.content,
-        attachments: targetMessage.attachments.map((att) => ({
-          url: att.url,
-          contentType: att.contentType,
+      const messageData = JSON.stringify(
+        {
+          content: getMessageData(targetMessage),
           sendBy: interaction.user.displayName,
-        })),
-      });
+        },
+        null,
+        2
+      );
 
       const [cacheEntry] = await db
         .insert(temporaryCache)
         .values({
-          data: MessageData,
+          data: messageData,
           contentType: "application/json",
         })
         .returning({ id: temporaryCache.id });
@@ -283,7 +285,6 @@ client.on("interactionCreate", async (interaction) => {
 
         const messageData = JSON.parse(cacheEntry.data) as {
           content: string;
-          attachments: { url: string; contentType: string; sendBy: string }[];
           sendBy: string;
         };
 
@@ -291,11 +292,11 @@ client.on("interactionCreate", async (interaction) => {
           interaction.user,
           interaction.guildId || "DM",
           question,
-          `User asked a question about a message sent by ${messageData.sendBy}, the message content is: ${messageData.content}`
+          `User asked a question about a message sent by ${messageData.sendBy}. Message content: ${messageData.content}`
         );
 
         if (response && response.text) {
-          return interaction.editReply(response.text);
+          return replyWithAiText(interaction, response.text);
         }
 
         return interaction.editReply(NO_RESPONSE_MESSAGE);
@@ -445,13 +446,14 @@ client.on("interactionCreate", async (interaction) => {
         );
 
         if ("asaError" in response && response.asaError) {
-          return interaction.editReply({
-            content: response.text || RESPONSES.normalError(),
-          });
+          return replyWithAiText(
+            interaction,
+            response.text || RESPONSES.normalError()
+          );
         }
 
         if (response && response.text) {
-          return interaction.editReply(response.text);
+          return replyWithAiText(interaction, response.text);
         }
 
         return interaction.editReply(NO_RESPONSE_MESSAGE);

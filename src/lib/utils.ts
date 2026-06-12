@@ -1,5 +1,49 @@
 import type { Client, Message, TextBasedChannel } from "discord.js";
 
+export const DISCORD_MAX_MESSAGE_LENGTH = 2000;
+
+export function splitDiscordContent(
+  content: string,
+  maxLength = DISCORD_MAX_MESSAGE_LENGTH
+): string[] {
+  if (content.length <= maxLength) return [content];
+
+  const chunks: string[] = [];
+  let remaining = content;
+
+  while (remaining.length > maxLength) {
+    let splitAt = remaining.lastIndexOf("\n", maxLength);
+    if (splitAt <= 0) {
+      splitAt = maxLength;
+    }
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  if (remaining.length > 0) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
+type ReplyCapableInteraction = {
+  editReply: (content: string) => Promise<unknown>;
+  followUp: (content: string) => Promise<unknown>;
+};
+
+export async function replyWithAiText(
+  interaction: ReplyCapableInteraction,
+  text: string
+) {
+  const chunks = splitDiscordContent(text);
+  await interaction.editReply(chunks[0]!);
+
+  for (let i = 1; i < chunks.length; i++) {
+    await interaction.followUp(chunks[i]!);
+  }
+}
+
 const DISCORD_MESSAGE_LINK_PATTERN =
   /https?:\/\/(?:discord\.com|discordapp\.com)\/channels\/(?:\d+|@me)\/(\d+)\/(\d+)/i;
 
@@ -47,7 +91,11 @@ export function parseReplyBookmarkCommand(
 
   const withLinkMatch = text.match(REPLY_BOOKMARK_WITH_LINK_PATTERN);
   if (withLinkMatch) {
-    const name = (withLinkMatch[2] ?? withLinkMatch[3] ?? withLinkMatch[4])?.trim();
+    const name = (
+      withLinkMatch[2] ??
+      withLinkMatch[3] ??
+      withLinkMatch[4]
+    )?.trim();
     if (!name) return null;
 
     const link = parseDiscordMessageLink(withLinkMatch[1]!);
@@ -151,4 +199,18 @@ export async function getImageDataFromUrl(
     buffer,
     r2Key,
   };
+}
+
+export function getMessageData(message: Message) {
+  const attachments = message.attachments.map(
+    (att) => `[${att.name}](${att.url}) - ${att.contentType}`
+  );
+
+  if (attachments.length > 0) {
+    return `${
+      message.content || "_(Empty message)_"
+    }\n\n Attachments: ${attachments.join("\n")}`;
+  }
+
+  return message.content || "_(Empty message)_";
 }

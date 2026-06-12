@@ -103,6 +103,7 @@ export const saveBookmark = {
         imageUrl: savedUrl,
         r2Key,
       });
+      console.log(`Bookmark saved as ${name} for user ${userId}`);
       return savedUrl;
     } catch (error) {
       console.error("Error saving bookmark:", error);
@@ -110,7 +111,8 @@ export const saveBookmark = {
   },
   tool: {
     name: "saveBookmark",
-    description: "Save a bookmark for a user",
+    description:
+      "Save a bookmark for a user. when user asked to save a bookmark and didnt provide a name, analyze the image and generate a name for the bookmark.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -128,6 +130,63 @@ export const saveBookmark = {
         },
       },
       required: ["name", "imageUrl"],
+    },
+  },
+};
+
+export const fetchAttachment = {
+  execute: async (url: string) => {
+    try {
+      if (!url || !url.startsWith("http")) {
+        return {
+          type: "error",
+          error: `Invalid URL: ${url}`,
+        };
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        return {
+          type: "error",
+          error: `Failed to fetch attachment: ${response.statusText}`,
+        };
+      }
+      const contentType = response.headers.get("content-type");
+      if (contentType?.includes("image")) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        return {
+          type: "image",
+          data: buffer.toString("base64"),
+          contentType,
+        };
+      }
+      return {
+        type: "text",
+        data: await response.text(),
+      };
+    } catch (error) {
+      console.error("Error fetching attachment:", error);
+      return {
+        type: "error",
+        error: `Failed to fetch attachment: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      };
+    }
+  },
+  tool: {
+    name: "fetchAttachment",
+    description:
+      "Fetch an attachment from a URL. It the response is an image, it will be returned as a base64 string.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        url: {
+          type: Type.STRING,
+          description: "The URL of the attachment to fetch",
+        },
+      },
+      required: ["url"],
     },
   },
 };

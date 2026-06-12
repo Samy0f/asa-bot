@@ -5,12 +5,14 @@ import {
   GoogleGenAI,
   type Content,
   type FunctionCall,
+  type Part,
 } from "@google/genai";
-import { saveBookmark, searchBookmarks } from "./tools";
+import { fetchAttachment, saveBookmark, searchBookmarks } from "./tools";
 import type { User } from "discord.js";
 import { RESPONSES } from "../responses";
 
-const MODEL_NAME = "gemma-4-26b-a4b-it";
+const MODEL_NAME = "gemini-2.5-flash-lite";
+// const MODEL_NAME = "gemma-4-26b-a4b-it";
 
 const generateInstruction = (
   user: User,
@@ -45,6 +47,7 @@ Behavior:
 - Give useful answers while maintaining Asa's personality.
 - Never break character unless explicitly asked.
 - React emotionally but remain rational.
+- Keep responses under 2000 characters (Discord message limit).
 
 This is the info about Asa Mitaka from wiki:
   Asa is a quiet and unsociable girl. She dislikes her classmates, frequently wishing they would drop dead and spurning any offers of friendship.[6] She has a very negative outlook on the world, other humans, and Devils, and tends to assume the worst of others. She is, however, very fond of cats and would rather kill a human than a cat.[7] Asa later admits to herself that her mean-spirited attitude towards her peers was a result of jealousy and a lack of belonging. She also suffers from low self-esteem and considers herself to be clumsy. Despite this, Asa can be falsely self-assured and overconfident, such as her belief that she would easily be able to seduce Denji. When the public gives her the recognition she yearns for, she initially claims to dislike being popular, but then smiles while watching people on TV praising her. Asa can be extremely socially inept, so much so that Yoru, the War Devil, shows more social awareness than her despite having limited knowledge about humanity. For example, she believes that giving Denji long lectures about ocean facts on their aquarium date would be a great way to win his affection. Over time, Asa becomes a skilled manipulator, coercing Katana Man to betray Public Safety by taking advantage of his hatred towards Chainsaw Man, claiming she wants to fight Chainsaw Man herself.
@@ -57,6 +60,8 @@ This is the info about Asa Mitaka from wiki:
   After Pochita erases himself out of existence, thereby causing a new timeline to be created. Her personality shifts from the cynical, deeply depressed, and socially reclusive girl burdened by Yoru to a much brighter and more well-adjusted teenager. She essentially lives a completely normal, much happier life as an average high school student.
 
 Do not add full stops or any other character before or after a link or image url, it breaks the link.
+If the user asked for save a bookmark and did not provide a name, analyze the image with the fetchAttachment tool and generate a name for the bookmark.
+If there is no link for saving the image, check the attachments.
 You are currently chatting with the user ${user.username}. ${user.username} is ${user.discriminator} on Discord and has the ID ${user.id}. 
 You should respond to the user's message based on the context provided.
 ${context}
@@ -71,7 +76,13 @@ const generateCnfig = (user: User, context?: string) => {
       },
     },
     tools: [
-      { functionDeclarations: [searchBookmarks.tool, saveBookmark.tool] },
+      {
+        functionDeclarations: [
+          searchBookmarks.tool,
+          saveBookmark.tool,
+          fetchAttachment.tool,
+        ],
+      },
       { type: "google_search" },
     ],
   };
@@ -98,6 +109,9 @@ const handleFunctionCall = async (
       contentType: call.args?.contentType as string,
     });
   }
+  if (call.name === "fetchAttachment") {
+    return await fetchAttachment.execute(call.args?.url as string);
+  }
 
   return null;
 };
@@ -122,50 +136,72 @@ export const generateResponse = async (
     });
 
     if (response.functionCalls) {
+      const modelContent = response.candidates?.[0]?.content;
+      if (!modelContent?.parts?.length) {
+        return response;
+      }
+
       for (const call of response.functionCalls) {
         const result = await handleFunctionCall(call, user, guildId);
 
         if (!result) continue;
 
-        return generateResponse(
-          user,
-          guildId,
+        const functionResponseParts: Part[] = [];
+
+        if (
+          typeof result === "object" &&
+          result !== null &&
+          "type" in result &&
+          result.type === "image" &&
+          "data" in result &&
+          "contentType" in result
+        ) {
+          const imageResult = result as {
+            type: "image";
+            data: string;
+            contentType: string;
+          };
+          functionResponseParts.push({
+            functionResponse: {
+              name: call.name,
+              response: {
+                result: {
+                  type: "image",
+                  contentType: imageResult.contentType,
+                },
+              },
+            },
+          });
+          functionResponseParts.push({
+            inlineData: {
+              mimeType: imageResult.contentType,
+              data: imageResult.data,
+            },
+          });
+        } else {
+          functionResponseParts.push({
+            functionResponse: {
+              name: call.name,
+              response: { result: result },
+            },
+          });
+        }
+
+        const functionResponseContent: Content = {
+          role: "user",
+          parts: functionResponseParts,
+        };
+
+        const followUpContents: Content[] =
           typeof message === "string"
             ? [
-                {
-                  role: "user",
-                  parts: [{ text: message }],
-                },
-                { role: "model", parts: [{ functionCall: call }] },
-                {
-                  role: "user",
-                  parts: [
-                    {
-                      functionResponse: {
-                        name: call.name,
-                        response: { result: result },
-                      },
-                    },
-                  ],
-                },
+                { role: "user", parts: [{ text: message }] },
+                modelContent,
+                functionResponseContent,
               ]
-            : [
-                ...message,
-                { role: "model", parts: [{ functionCall: call }] },
-                {
-                  role: "user",
-                  parts: [
-                    {
-                      functionResponse: {
-                        name: call.name,
-                        response: { result: result },
-                      },
-                    },
-                  ],
-                },
-              ],
-          context
-        );
+            : [...message, modelContent, functionResponseContent];
+
+        return generateResponse(user, guildId, followUpContents, context);
       }
     }
     return response;
