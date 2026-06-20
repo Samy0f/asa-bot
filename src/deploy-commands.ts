@@ -50,6 +50,18 @@ const commands = [
       InteractionContextType.BotDM,
       InteractionContextType.PrivateChannel,
     ]),
+  new ContextMenuCommandBuilder()
+    .setName("Eat")
+    .setType(ApplicationCommandType.Message)
+    .setIntegrationTypes([
+      ApplicationIntegrationType.UserInstall,
+      ApplicationIntegrationType.GuildInstall,
+    ])
+    .setContexts([
+      InteractionContextType.Guild,
+      InteractionContextType.BotDM,
+      InteractionContextType.PrivateChannel,
+    ]),
 
   new ContextMenuCommandBuilder()
     .setName("Bookmark Image")
