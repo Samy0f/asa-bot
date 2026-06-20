@@ -151,16 +151,12 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.deferReply();
 
       const targetMessage = interaction.targetMessage;
-      const senderImage = targetMessage.author.avatar;
+      const senderImage = targetMessage.author.displayAvatarURL({
+        extension: "png",
+        size: 256,
+      });
 
-      if (!senderImage) {
-        return interaction.reply({
-          content: "Sender has no avatar",
-          flags: [MessageFlags.Ephemeral],
-        });
-      }
-
-      return interaction.reply({
+      return interaction.editReply({
         content: `${process.env.APP_URL}/eat?food=${encodeURIComponent(
           senderImage
         )}`,
