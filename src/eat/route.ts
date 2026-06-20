@@ -1,45 +1,66 @@
 import Elysia, { t } from "elysia";
 
-const eat = new Elysia({ prefix: "/eat" }).get(
-  "/",
-  async ({ query, set }) => {
-    let url: URL;
+const eatQuery = t.Object({
+  food: t.String(),
+});
 
-    try {
-      url = new URL(query.food);
-    } catch {
-      set.status = 400;
-      return {
-        error: "Invalid URL",
-      };
-    }
+async function buildEatGif(
+  food: string,
+  set: { status?: number | string; headers: Record<string, string | number> }
+) {
+  let url: URL;
 
-    try {
-      const { eatFood } = await import("./index");
-      const gif = await eatFood(url.href);
+  try {
+    url = new URL(food);
+  } catch {
+    set.status = 400;
+    return {
+      error: "Invalid URL",
+    };
+  }
 
-      if (!gif) {
-        set.status = 500;
-        return {
-          error: "Failed to generate GIF",
-        };
-      }
+  try {
+    const { eatFood } = await import("./index");
+    const gif = await eatFood(url.href);
 
-      set.headers["Content-Type"] = "image/gif";
-      return gif;
-    } catch (error) {
-      console.error("Eat route error:", error);
+    if (!gif) {
       set.status = 500;
       return {
         error: "Failed to generate GIF",
       };
     }
-  },
-  {
-    query: t.Object({
-      food: t.String(),
-    }),
+
+    set.headers["Content-Type"] = "image/gif";
+    set.headers["Content-Disposition"] = 'inline; filename="asa-eat.gif"';
+    set.headers["Cache-Control"] = "public, max-age=3600, no-transform";
+    return gif;
+  } catch (error) {
+    console.error("Eat route error:", error);
+    set.status = 500;
+    return {
+      error: "Failed to generate GIF",
+    };
   }
-);
+}
+
+const eat = new Elysia({ prefix: "/eat" })
+  .get(
+    "/",
+    async ({ query, set }) => {
+      return buildEatGif(query.food, set);
+    },
+    {
+      query: eatQuery,
+    }
+  )
+  .get(
+    "/asa.gif",
+    async ({ query, set }) => {
+      return buildEatGif(query.food, set);
+    },
+    {
+      query: eatQuery,
+    }
+  );
 
 export default eat;

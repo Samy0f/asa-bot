@@ -157,7 +157,7 @@ client.on("interactionCreate", async (interaction) => {
       });
 
       return interaction.editReply({
-        content: `${process.env.APP_URL}/eat?food=${encodeURIComponent(
+        content: `${process.env.APP_URL}/eat/asa.gif?food=${encodeURIComponent(
           senderImage
         )}`,
       });
